@@ -9,10 +9,6 @@ import numpy as np
 import sys
 from math import hypot
 
-# =========================
-# Utilidades de video (Paso-0 & Paso-4)
-# =========================
-
 def try_open_capture(device, width, height, fps, prefer_mjpg=True, use_v4l2=True):
     """Intenta abrir cámara con MJPG; si falla, usa formato por defecto."""
     cap_flags = cv2.CAP_V4L2 if use_v4l2 else 0
@@ -28,7 +24,7 @@ def try_open_capture(device, width, height, fps, prefer_mjpg=True, use_v4l2=True
     fourcc_eff = None
     if prefer_mjpg:
         # Intentar MJPG
-        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*'MJPG'))
         time.sleep(0.05)  # pequeño respiro
         fourcc_eff = int(cap.get(cv2.CAP_PROP_FOURCC))
         if fourcc_eff == 0:
@@ -50,10 +46,7 @@ def fourcc_to_str(code_int):
         return "UNKNOWN"
     return ''.join([chr((int(code_int) >> (8 * i)) & 0xFF) for i in range(4)])
 
-# =========================
 # Dibujo y línea de conteo
-# =========================
-
 def put_hud(img, lines, x, y):
     for line in lines:
         cv2.putText(img, line, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,0), 3, cv2.LINE_AA)
@@ -129,9 +122,8 @@ def associate_tracks(tracks, detections, assoc_radius, ttl_frames):
 
     return assigned
 
-# =========================
-# MAE (Paso-5)
-# =========================
+# Funcion MAE 
+# TODO: Meter la dentro del flujo del main y agregar botones para contar IN / OUT
 
 def reporte_mae(conteo_auto, conteo_manual):
     mae = abs(conteo_auto - conteo_manual)
@@ -143,93 +135,75 @@ def reporte_mae(conteo_auto, conteo_manual):
     print(f"% Error:           {pct:.2f}%")
     return mae, pct
 
-# =========================
 # Main (Pasos 0–4 y visualización)
-# =========================
 
 def main():
     ap = argparse.ArgumentParser(description="Conteo por cruce con MOG2 + asociación simple")
-    # Entrada (Paso-4)
-    ap.add_argument("--device", type=str, default="/dev/video0", help="Ruta del dispositivo V4L2 o índice (e.g., 0)")
-    ap.add_argument("--source", type=str, default=None, help="Ruta a video.mp4 (fallback si cámara no abre)")
+    # Parametros de video de entrada 
+    ap.add_argument("--source", type=str, required=True, help="Ruta a video.mp4 o índice de cámara (e.g., 0)")
     ap.add_argument("--width",  type=int, default=640)
     ap.add_argument("--height", type=int, default=360)
     ap.add_argument("--fps",    type=int, default=30)
     ap.add_argument("--no-mjpg", action="store_true", help="No intentar MJPG")
     ap.add_argument("--no-v4l2", action="store_true", help="No usar CAP_V4L2")
 
-    # MOG2 (Paso-1)
+    # MOG2 configuraciones
     ap.add_argument("--history", type=int, default=500)
     ap.add_argument("--varThreshold", type=float, default=32.0)
     ap.add_argument("--detectShadows", action="store_true", help="Activar sombras de MOG2")
 
-    # Morfología (Paso-1)
+    # Morfología para los centroides
     ap.add_argument("--open-k", type=int, default=3, help="Kernel odd para opening")
     ap.add_argument("--close-k", type=int, default=5, help="Kernel odd para closing")
     ap.add_argument("--open-it", type=int, default=1)
     ap.add_argument("--close-it", type=int, default=1)
 
-    # Contornos (Paso-1)
+    # Contornos
     ap.add_argument("--min-area", type=int, default=300)
 
-    # Línea (Paso-1)
+    # Línea
+    # TODO: permitir al usuario meter las coordenadas de la linea mediante este comando 
     ap.add_argument("--line-y", type=int, default=None, help="Línea horizontal en Y; si no, defínela con 2 clics (tecla 'l')")
     
-    # Asociación (Paso-2)
+    # Configuracion de Asociacion
     ap.add_argument("--assoc-radius", type=float, default=45.0, help="R en píxeles (30–60 típico)")
     ap.add_argument("--ttl-frames", type=int, default=8, help="TTL (6–10 típico)")
     ap.add_argument("--age-min", type=int, default=3, help="Edad mínima para contar (histéresis)")
 
-    # Paso-3 tiempos
+    # Tiempos
     ap.add_argument("--print-times", action="store_true", help="Imprime tiempos por etapa en ms")
 
     args = ap.parse_args()
 
-    # Abrir cámara
-    device_arg = args.device
+    # Abrir fuente (índice de cámara o ruta de archivo)
+    source_arg = args.source
     try:
         # permitir índice numérico
-        if device_arg.isdigit():
-            device_input = int(device_arg)
+        if source_arg.isdigit():
+            source_input = int(source_arg)
         else:
-            device_input = device_arg
-    except:
-        device_input = device_arg
+            source_input = source_arg
+    except Exception:
+        source_input = source_arg
 
     cap, eff = try_open_capture(
-        device_input, args.width, args.height, args.fps,
+        source_input, args.width, args.height, args.fps,
         prefer_mjpg=(not args.no_mjpg),
         use_v4l2=(not args.no_v4l2)
     )
 
-    used_source = None
     if cap is None or not cap.isOpened():
-        if args.source:
-            print(f"[AVISO] No se pudo abrir '{args.device}'. Haciendo fallback a --source: {args.source}")
-            cap = cv2.VideoCapture(args.source)
-            used_source = args.source
-            if not cap.isOpened():
-                print("[ERROR] Tampoco se pudo abrir --source. Saliendo.")
-                sys.exit(1)
-            eff = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                   int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-                   cap.get(cv2.CAP_PROP_FPS),
-                   int(cap.get(cv2.CAP_PROP_FOURCC)))
-        else:
-            print(f"[ERROR] No se pudo abrir '{args.device}' y no se proporcionó --source.")
-            sys.exit(1)
+        print(f"[ERROR] No se pudo abrir la fuente especificada: '{args.source}'")
+        sys.exit(1)
 
     eff_w, eff_h, eff_fps, eff_fourcc = eff
     print("=== Configuración efectiva de captura ===")
     print(f"Resolución: {eff_w}x{eff_h}")
     print(f"FPS (reportado): {eff_fps:.2f}")
     print(f"FOURCC: {fourcc_to_str(eff_fourcc)}")
-    if used_source:
-        print(f"Fuente: archivo '{used_source}'")
-    else:
-        print(f"Fuente: dispositivo '{args.device}'")
+    print(f"Fuente: '{args.source}'")
 
-    # Paso-1: MOG2
+    # Invocacion del mog
     mog2 = cv2.createBackgroundSubtractorMOG2(
         history=args.history,
         varThreshold=args.varThreshold,
@@ -244,6 +218,7 @@ def main():
     line_defined = False
     line_pts = []  # [(x1,y1), (x2,y2)]
     horizontal_y = args.line_y
+    baseline_mode = 'horizontal' if horizontal_y is not None else 'manual'
 
     # Conteos
     count_in, count_out, total = 0, 0, 0
@@ -262,11 +237,12 @@ def main():
     cv2.namedWindow(win)
 
     def on_mouse(event, x, y, flags, param):
-        nonlocal line_pts, line_defined
+        nonlocal line_pts, line_defined, baseline_mode, horizontal_y
         if drawing_line_mode and event == cv2.EVENT_LBUTTONDOWN:
             line_pts.append((x,y))
             if len(line_pts) == 2:
                 line_defined = True
+                baseline_mode = 'manual'
 
     cv2.setMouseCallback(win, on_mouse)
 
@@ -305,11 +281,11 @@ def main():
 
         # Línea: horizontal o por 2 puntos
         a, b = None, None
-        if horizontal_y is not None:
+        if baseline_mode == 'horizontal' and horizontal_y is not None:
             a = (0, horizontal_y)
             b = (frame.shape[1]-1, horizontal_y)
             cv2.line(frame, a, b, (0,255,255), 2)
-        elif line_defined and len(line_pts) >= 2:
+        elif baseline_mode == 'manual' and line_defined and len(line_pts) >= 2:
             a, b = line_pts[0], line_pts[1]
             cv2.line(frame, a, b, (0,255,255), 2)
 
@@ -388,13 +364,22 @@ def main():
             show_mask = not show_mask
         elif key == ord('b'):
             show_blobs = not show_blobs
+
+        # Activar modo dibujo de línea    
         elif key == ord('l'):
-            # Activar modo dibujo de línea
             line_pts = []
             line_defined = False
-            horizontal_y = None
+            baseline_mode = 'manual'
             drawing_line_mode = True
             print("[INFO] Haz 2 clics para definir la línea.")
+
+        # Volver a modo horizontal si se definió por parámetro
+        elif key == ord('h'):
+            if args.line_y is not None:
+                baseline_mode = 'horizontal'
+                line_defined = False
+                print(f"[INFO] Línea horizontal activada en Y={args.line_y}")
+
         # Finalizar dibujo al tener 2 puntos
         if drawing_line_mode and line_defined:
             drawing_line_mode = False
@@ -404,7 +389,5 @@ def main():
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    # Si sólo quieres usar MAE como ejemplo, descomenta:
-    # reporte_mae(conteo_auto=95, conteo_manual=100)
     main()
 
