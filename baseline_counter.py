@@ -335,7 +335,6 @@ def main():
         t_prev = t_now
 
         hud.append(f"FPS: {fps_smooth:.1f}  FOURCC: {fourcc_to_str(eff_fourcc)}")
-
         put_hud(frame, hud, 10, 20)
 
         # Mostrar máscara opcional
@@ -387,6 +386,22 @@ def main():
 
     cap.release()
     cv2.destroyAllWindows()
+
+    # Validación MAE al terminar el video 
+    if not args.source.isdigit() and not args.source.startswith('/dev/video'):
+        print(f"Conteo AUTOMÁTICO - IN: {count_in}, OUT: {count_out}")
+    
+    try:
+        manual_in = int(input("Conteo manual IN: "))
+        manual_out = int(input("Conteo manual OUT: "))
+        
+        # Calcular y mostrar MAE
+        print("\n--- REPORTE MAE ---")
+        reporte_mae(count_in, manual_in)  # MAE para entradas
+        reporte_mae(count_out, manual_out)  # MAE para salidas
+        
+    except ValueError:
+        print("Error: Ingrese valores numéricos válidos para el conteo manual.")
 
 if __name__ == "__main__":
     main()
