@@ -134,7 +134,7 @@ def reporte_mae(conteo_auto, conteo_manual, tipo: str):
 def main():
     ap = argparse.ArgumentParser(description="Conteo por cruce con MOG2 + asociación simple")
     # Parametros de video de entrada 
-    ap.add_argument("--source", type=str, required=True, help="Ruta a video.mp4 o índice de cámara (e.g., 0)")
+    ap.add_argument("--source", type=str, default="/dev/video0", help="Ruta a video.mp4 o índice de cámara (e.g., 0)")
     ap.add_argument("--width",  type=int, default=640)
     ap.add_argument("--height", type=int, default=360)
     ap.add_argument("--fps",    type=int, default=30)
@@ -184,6 +184,15 @@ def main():
         prefer_mjpg=(not args.no_mjpg),
         use_v4l2=(not args.no_v4l2)
     )
+
+    # Si falla abrir el capture
+    if cap is None or not cap.isOpened():
+        print(f"[ERROR] No se pudo abrir la fuente especificada: '{args.source}'")
+        print(f"abriendo camera en /dev/video0 por defecto")
+        cap, eff = try_open_capture("/dev/video0", args.width, args.height, args.fps,
+        prefer_mjpg=(not args.no_mjpg),
+        use_v4l2=(not args.no_v4l2)
+        )
 
     if cap is None or not cap.isOpened():
         print(f"[ERROR] No se pudo abrir la fuente especificada: '{args.source}'")
