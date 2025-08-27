@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 import argparse
 import time
 from collections import deque
@@ -123,12 +120,10 @@ def associate_tracks(tracks, detections, assoc_radius, ttl_frames):
     return assigned
 
 # Funcion MAE 
-# TODO: Meter la dentro del flujo del main y agregar botones para contar IN / OUT
-
-def reporte_mae(conteo_auto, conteo_manual):
+def reporte_mae(conteo_auto, conteo_manual, tipo: str):
     mae = abs(conteo_auto - conteo_manual)
     pct = (mae / max(1, conteo_manual)) * 100.0
-    print("==== Validación de Conteo ====")
+    print(f"==== Validación de Conteo {tipo}====")
     print(f"Conteo automático: {conteo_auto}")
     print(f"Conteo manual:     {conteo_manual}")
     print(f"MAE:               {mae:.2f}")
@@ -136,11 +131,10 @@ def reporte_mae(conteo_auto, conteo_manual):
     return mae, pct
 
 # Main (Pasos 0–4 y visualización)
-
 def main():
     ap = argparse.ArgumentParser(description="Conteo por cruce con MOG2 + asociación simple")
     # Parametros de video de entrada 
-    ap.add_argument("--source", type=str, required=True, help="Ruta a video.mp4 o índice de cámara (e.g., 0)")
+    ap.add_argument("--source", type=str, default="/dev/video0", help="Ruta a video.mp4 o índice de cámara (e.g., 0)")
     ap.add_argument("--width",  type=int, default=640)
     ap.add_argument("--height", type=int, default=360)
     ap.add_argument("--fps",    type=int, default=30)
@@ -162,7 +156,6 @@ def main():
     ap.add_argument("--min-area", type=int, default=300)
 
     # Línea
-    # TODO: permitir al usuario meter las coordenadas de la linea mediante este comando 
     ap.add_argument("--line-y", type=int, default=None, help="Línea horizontal en Y; si no, defínela con 2 clics (tecla 'l')")
     
     # Configuracion de Asociacion
@@ -191,6 +184,15 @@ def main():
         prefer_mjpg=(not args.no_mjpg),
         use_v4l2=(not args.no_v4l2)
     )
+
+    # Si falla abrir el capture
+    if cap is None or not cap.isOpened():
+        print(f"[ERROR] No se pudo abrir la fuente especificada: '{args.source}'")
+        print(f"abriendo camera en /dev/video0 por defecto")
+        cap, eff = try_open_capture("/dev/video0", args.width, args.height, args.fps,
+        prefer_mjpg=(not args.no_mjpg),
+        use_v4l2=(not args.no_v4l2)
+        )
 
     if cap is None or not cap.isOpened():
         print(f"[ERROR] No se pudo abrir la fuente especificada: '{args.source}'")
@@ -222,6 +224,7 @@ def main():
 
     # Conteos
     count_in, count_out, total = 0, 0, 0
+    count_in_manual, count_out_manual = 0, 0
 
     # Tracking
     tracks = {}
@@ -325,8 +328,17 @@ def main():
 
         # HUD conteos
         hud = [
-            f"IN: {count_in}  OUT: {count_out}  TOTAL: {total}",
+            f"Auto IN: {count_in}  OUT: {count_out}",
+            f"Manual IN: {count_in_manual}  OUT: {count_out_manual}",
         ]
+
+        if count_in_manual > 0:
+            mae_in = abs(count_in - count_in_manual)
+            hud.append(f"MAE IN: {mae_in}")
+        if count_out_manual > 0:
+            mae_out = abs(count_out - count_out_manual)
+            hud.append(f"MAE OUT: {mae_out}")
+
         # FPS
         t_now = time.perf_counter()
         fps = 1.0 / max(1e-6, (t_now - t_prev))
@@ -363,7 +375,6 @@ def main():
             show_mask = not show_mask
         elif key == ord('b'):
             show_blobs = not show_blobs
-
         # Activar modo dibujo de línea    
         elif key == ord('l'):
             line_pts = []
@@ -371,13 +382,19 @@ def main():
             baseline_mode = 'manual'
             drawing_line_mode = True
             print("[INFO] Haz 2 clics para definir la línea.")
-
         # Volver a modo horizontal si se definió por parámetro
         elif key == ord('h'):
             if args.line_y is not None:
                 baseline_mode = 'horizontal'
                 line_defined = False
                 print(f"[INFO] Línea horizontal activada en Y={args.line_y}")
+        elif key == ord('i'):
+            count_in_manual += 1
+            print(f"Incrementando conteo manual IN: {count_in_manual}")
+        elif key == ord('o'):
+            count_out_manual += 1
+            print(f"Incrementando conteo manual OUT: {count_out_manual}")
+            
 
         # Finalizar dibujo al tener 2 puntos
         if drawing_line_mode and line_defined:
@@ -392,17 +409,19 @@ def main():
         print(f"Conteo AUTOMÁTICO - IN: {count_in}, OUT: {count_out}")
     
     try:
-        manual_in = int(input("Conteo manual IN: "))
-        manual_out = int(input("Conteo manual OUT: "))
+        if count_in_manual == 0 and count_out_manual == 0:
+            manual_in = int(input("Conteo manual IN: "))
+            manual_out = int(input("Conteo manual OUT: "))
+        else:
+            manual_in = count_in_manual
+            manual_out = count_out_manual
         
         # Calcular y mostrar MAE
         print("\n--- REPORTE MAE ---")
-        reporte_mae(count_in, manual_in)  # MAE para entradas
-        reporte_mae(count_out, manual_out)  # MAE para salidas
-        
+        reporte_mae(count_in, manual_in, "IN")  # MAE para entradas 
+        reporte_mae(count_out, manual_out, "OUT")  # MAE para salidas
     except ValueError:
         print("Error: Ingrese valores numéricos válidos para el conteo manual.")
 
 if __name__ == "__main__":
     main()
-
